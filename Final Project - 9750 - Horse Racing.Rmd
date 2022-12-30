@@ -1,0 +1,218 @@
+---
+title: "Final Project"
+author: "Matt Imberman and Luke Liao"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+---  
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(modelr)
+library(lubridate)
+library(randomForest)
+library(ggplot2)
+library(cowplot)
+library(party)
+library(dplyr)
+library(grid)
+library(gridExtra)
+```
+
+## Introduction 
+Horse racing is a huge business in Hong Kong, the gambling aspect of the sport has attracted many people thus creating one of the biggest money markets.
+The goal of this project is to  use the data from horse racing in Hong Kong, which we download from [**Kaggle**](https://www.kaggle.com/gdaley/hkracing), to predict what factors are most crucial to make a winning horse, or a horse with the best finish time. 
+There are many elements that need to be considered when mapping the prediction, such as difference in a horse's age, country of origin, breed, etc. All play a critical part when evaluating. We focused on age, horse type, declared weight and draw as predictors for finish time. 
+
+
+
+
+```{r combine data, warning=FALSE, include=FALSE}
+runs <- as_tibble(read.csv('runs.csv'))
+races <- as_tibble(read.csv('races.csv'))
+
+data2 <- left_join(runs, races, by = "race_id" )
+
+data1 <- data2 %>%
+  filter(distance == 1200)%>%
+  select(finish_time, horse_age, horse_type, draw, declared_weight)%>%
+   mutate(log_weight =log2(declared_weight), log_finish =log2(finish_time))
+```
+
+
+##          Explanation of subgroups, n, number of variables and limitation of the data 
+
+Within our data set, there are certain subgroups that we feel are necessary to clarify what they mean. Other than the obvious age, country, "horse_type" is sex of the horse (e.g. 'Gelding', 'Mare', 'Horse', 'Rig', 'Colt', 'Filly'); "declared_weight" is the weight of the horse and jockey combined, in lbs; "draw" is the post position of the horse in the race; "finish_time" is the horse's completed race time in seconds. The data has a total of 79448 rows and 35 columns, with total of `r length(as.matrix(data2))` variables.
+
+
+## HYPOTHESIS
+
+A younger, lighter horse will have better finish times than other horses. 
+
+
+## Exploratory Summary and Graphs 
+We start exploring our data sets by comparing differences in factors, especially trying to find out what is the most common element in a winning horse.
+```{r horse age/country, fig.width = 10, fig.height = 4, fig.align='left',  include=TRUE, echo = FALSE}
+winner <- data2 %>%
+  filter(won == "1")
+
+ggplot(winner, aes(x = horse_age, y = won))+
+  geom_bar(stat = "identity")+
+  labs(title = "Winning horse age", x = "Horse Age", y = "Total winner") -> p1
+
+winner <- data2 %>%
+  filter(won == "1")
+ggplot(winner, aes(x = horse_country, y = won))+
+  geom_bar(stat = "identity")+
+  labs(title = "Country of Origin", x = "Country", y = "Total winner") -> p2
+grid.arrange(p1, p2, ncol = 2)
+
+```
+```{r horse type/draw, fig.width = 10, fig.height = 4, fig.align='left',  include=TRUE, echo=FALSE}
+
+ggplot(winner, aes(x = horse_type, y = won))+
+  geom_bar(stat = "identity")+
+  labs(title = "Horse Type (sex)", x = "Sex", y = "Total winner") -> p1
+
+ggplot(winner, aes(x = draw, y = won))+
+  geom_bar(stat = "identity")+
+  labs(title = "Draw (Position)", x = "Draw", y = "Total winner") -> p2
+
+ggplot(winner, aes(x = declared_weight, y = won))+
+  geom_bar(stat = "identity")+
+  labs(title = "Weight of Horse + Jockey", x = "Total Weight (lbs)", y = "Total winner")
+
+
+grid.arrange(p1, p2, ncol = 2)
+```
+As the above graphs show, most of the winning horses are at age 3; majority of them were either from Australia or New Zealand; Gelding seems to be the most winning horse, which is just a another name for a castrated male horse; In terms of draw (position) in a race, lane number between 1-3 produced the most winners and finally there were no guaranteed winner in terms of combined weight of horse and jockey. 
+These findings are rather interesting since it somewhat verified our hypothesis, we predicted the younger the horse the faster it can run however this is only partially true since age 3 seems to be the golden age. In terms of weight, we thought the lighter the horse the better however this was not true as the distribution shows the middle pack around 1100lbs produced the best time. 
+
+
+
+## Linear models and multiple regression to predict finish time
+
+Not all the races in our data are the same distance.  We decided to focus on races that are 1200 meters in distance.  This was the distance that had the most races.  We start off our analysis by plotting declared weight vs finish times and then another plot of the log of these values
+
+```{r, linear graphs, warning=FALSE, echo=FALSE}
+
+ggplot(data1, aes(x = declared_weight, y = finish_time))+
+  geom_point()+ylim(65,80)
+
+
+ggplot(data1, aes(x = log_weight, y = log_finish))+
+  geom_point()+ ylim(6,6.4)
+```
+
+
+
+After looking at the plotted data, we do not see too much linearity.  We ran multiple linear/regression models below to see if there was any predictive qualities in our data
+
+
+## Model Outputs
+```{r, linear models, warning=FALSE, echo=FALSE}
+
+lm_model <- lm(finish_time ~  declared_weight, data = data1)
+summary(lm_model)
+
+lm_log_model1 <- lm(log_finish ~ log_weight, data =data1)
+summary(lm_log_model1)
+
+mult_model1 <- lm(finish_time ~ declared_weight, horse_age, data = data1)
+summary(mult_model1)
+
+mult_model2 <- lm(finish_time ~ declared_weight, horse_age, draw, data =data1)
+summary(mult_model2)
+```
+
+Though each model has a small r squared only averaging **`r mean(0.01108, 0.006573, 0.01022, 0.01606)`**, we decided to use predictive data from mult_model2, which uses the most variables.  Below, we see a plot of all predicted values.  It appears that the predictions are clustering around certain finish times, which will not have much predictive value
+
+```{r, predictive models, warning=FALSE, echo=FALSE}
+
+predicted_data <- data1 %>% mutate(predicted_values = predict(mult_model2), residuals = predicted_values-finish_time)
+
+
+
+ggplot(predicted_data, aes(x = finish_time, y = predicted_values))+
+  geom_point()+ylim(70.75,71.15)
+```
+
+
+
+
+
+
+
+```{r, decision tree and random forest data, include=FALSE}
+str(data1)
+
+split_horse <- floor(0.75 * nrow(data1))
+split_horse
+train_idx <- sample(seq_len(nrow(data1)), size = split_horse)
+train <- data1[train_idx, ]
+test <- data1[-train_idx, ]
+
+
+test$horse_age <- as.factor(test$horse_age)
+test$horse_type <- as.factor(test$horse_type)
+test$draw <- as.factor(test$draw)
+test$finish_time <- as.factor(test$finish_time)
+
+split_horse <- floor(0.75 * nrow(data1))
+split_horse
+train_idx <- sample(seq_len(nrow(data1)), size = split_horse)
+train <- data1[train_idx, ]
+test <- data1[-train_idx, ]
+
+
+test$horse_age <- as.factor(test$horse_age)
+test$horse_type <- as.factor(test$horse_type)
+test$draw <- as.factor(test$draw)
+test$declared_weight <- as.numeric(test$declared_weight)
+test$finish_time <- as.numeric(test$finish_time)
+data1$horse_type <- as.factor(data1$horse_type)
+str(test)
+```
+
+
+## Conditional inference tree analysis 
+
+We decided to use a conditional inference tree analysis to see if we could predict the finish time of each horse.  We selected declared weight and horse age as predictor values, as these are very important for the speed of the horse.  We then selected the distance with the most races.  Races at **1200** meters were by far the most prevalent.
+
+```{r, decision tree, echo=FALSE}
+tree <- ctree(finish_time~ declared_weight + horse_age, data = data1)
+
+
+plot(tree,terminal_panel = node_boxplot(tree,yscale =c(65,80)))
+```
+
+After running the conditional tree we see that horse age is the most important predictor of finish time.  As you travel down through the nodes, we see small differences in finish times amongst various weight classes.   We can see that some of the quickest horses (lowest finish time) are horses that are younger than or equal to3 years old and have a declared weight of less than 1183 pounds.  
+
+
+
+
+## Random Forest
+
+To expand on our tree analysis, we decided a random forest analysis would be most appropriate.  We separated our data as 75% training data and 25% testing data.  We used a random forest model with 500 trees.
+
+```{r, random forest, echo=FALSE}
+set.seed(200)
+model1 <- randomForest(finish_time ~ declared_weight + draw + horse_type +horse_age, data=test, importance= TRUE, na.action = na.omit)
+
+
+varImpPlot(model1, main = "Variable Importance")
+
+```
+
+
+Our random forest analysis clearly shows what variables are most important when predicting finish time.  On the first graph, we can see that removing horse age from our model would significantly increase our mean squared error.  This shows a high importance of horse age in our model.  when we look at the node purity graph, we can see that declared weight is one of the most important variables in our model.  This number might be skewed by the large amount of different weights, but it is nonetheless, important.  The node impurity graph also shows a high importance for horse age.
+
+## CONCLUSION
+
+We began our analysis of horse racing data in an attempt to find out what factors are most critical in making a winning horse. We discovered that although age and weight of horse + jockey are important (proving our hypothesis was correct), the data we possess did not show any valuable predictions. The data did not show a linear path and our linear models had very low r squared. In conclusion, we think the horse racing data set did prove our hypothesis and was heading to the right direct. A horse's age and weight are important factors when trying to predict the finish time, however, our,  models came up short in predictive value.  In the end, we learned that THE HOUSE ALWAYS WINS.  Making acurate predictions for finishing times of horses races is not feasible.  Many have tried in the past and have come up short.
+
+
+
